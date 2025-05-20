@@ -1,0 +1,13 @@
+alpaca-py>=0.8.0
+pandas>=2.0.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+python-dotenv>=1.0.0
+yfinance>=0.2.0
+pytz==2023.3
+requests==2.31.0
+websocket-client==1.6.1
+backtrader==1.9.78.123
+scikit-learn==1.3.0
+# ta-lib==0.4.26 # Requires separate installation of C library
+pytest==7.4.0

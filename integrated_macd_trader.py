@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 from alpaca.trading.enums import OrderSide, TimeInForce
 
 # Import our components
-from enhanced_quote_monitor import EnhancedQuoteMonitor
+from quote_monitor_selector import QuoteMonitor  # This will import from either Alpaca or Yahoo Finance
 from strategies import MACDStrategy, StrategyFactory
 from main import AlpacaTradingSystem
 
@@ -73,8 +73,8 @@ class IntegratedMACDTrader:
         # Initialize components
         logger.info(f"Initializing integrated trading system for {symbol}")
         
-        # 1. Initialize the Quote Monitor
-        self.quote_monitor = EnhancedQuoteMonitor(
+        # 1. Initialize the Quote Monitor (either Alpaca or Yahoo Finance based on environment variable)
+        self.quote_monitor = QuoteMonitor(
             symbol=symbol,
             max_records=max(slow_window * 3, 500),  # Keep enough records for good MACD calculation
             interval_seconds=interval_seconds,
@@ -123,10 +123,14 @@ class IntegratedMACDTrader:
         return elapsed_minutes >= self.warmup_period_minutes
     
     def update_quotes(self):
-        """Update the quote data."""
-        quote_data = self.quote_monitor.get_latest_quote()
-        if quote_data:
-            self.quote_monitor.add_quote_to_dataframe(quote_data)
+        """
+        Check if we have new quote data from the WebSocket stream.
+        With WebSockets, quotes are automatically added to the dataframe
+        as they arrive, so we just need to check if we have data.
+        """
+        # WebSocket already adds quotes to dataframe automatically
+        # Just check if we have any quotes
+        if not self.quote_monitor.quotes_df.empty:
             return True
         return False
     

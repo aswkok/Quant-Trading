@@ -1,0 +1,13 @@
+{
+  "trades": 0,
+  "total_trades": 0,
+  "successful_trades": 0,
+  "signals": 0,
+  "errors": 211,
+  "start_time": "2025-05-21T09:47:24.486509",
+  "last_update": "2025-05-21T09:47:24.478969",
+  "market_open_count": 0,
+  "market_close_count": 0,
+  "restarts": 0,
+  "last_health_check": "2025-05-22T16:38:40.002355"
+}

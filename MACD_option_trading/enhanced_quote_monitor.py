@@ -348,9 +348,34 @@ class EnhancedQuoteMonitor:
         # Get the latest values
         latest = self.quotes_df.iloc[-1]
         
-        # Check for crossover/crossunder
-        crossover = latest['crossover'] if 'crossover' in self.quotes_df.columns else False
-        crossunder = latest['crossunder'] if 'crossunder' in self.quotes_df.columns else False
+        # Check for crossover/crossunder - handle potential DataFrame/Series values
+        if 'crossover' in self.quotes_df.columns:
+            crossover_val = latest['crossover']
+            # Handle different types to avoid ambiguity
+            if isinstance(crossover_val, (bool, int, float)):
+                crossover = bool(crossover_val)
+            elif hasattr(crossover_val, 'item'):
+                # For pandas Series or numpy arrays
+                crossover = bool(crossover_val.item())
+            else:
+                logger.warning(f"Unexpected crossover type: {type(crossover_val)}, using False")
+                crossover = False
+        else:
+            crossover = False
+            
+        if 'crossunder' in self.quotes_df.columns:
+            crossunder_val = latest['crossunder']
+            # Handle different types to avoid ambiguity
+            if isinstance(crossunder_val, (bool, int, float)):
+                crossunder = bool(crossunder_val)
+            elif hasattr(crossunder_val, 'item'):
+                # For pandas Series or numpy arrays
+                crossunder = bool(crossunder_val.item())
+            else:
+                logger.warning(f"Unexpected crossunder type: {type(crossunder_val)}, using False")
+                crossunder = False
+        else:
+            crossunder = False
         
         # Determine signal
         signal = 0.0

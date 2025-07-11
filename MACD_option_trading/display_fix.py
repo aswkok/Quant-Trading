@@ -35,9 +35,9 @@ def suppress_pandas_warnings():
                            message="The behavior of DataFrame concatenation with empty or all-NA entries is deprecated")
     
 # Safe display methods to add to real_time_display.py
-SAFE_DISPLAY_METHODS = """
+SAFE_DISPLAY_METHODS = '''
 def safe_addstr(self, y, x, text, attr=0):
-    """
+    \"\"\"
     Safely add a string to the screen, handling boundary errors.
     
     Args:
@@ -45,7 +45,7 @@ def safe_addstr(self, y, x, text, attr=0):
         x: X coordinate (column)
         text: Text to display
         attr: Text attributes (color, bold, etc.)
-    """
+    \"\"\"
     height, width = self.screen.getmaxyx()
     if y >= height or x >= width:
         return
@@ -83,7 +83,7 @@ def safe_addch(self, y, x, ch, attr=0):
         pass
 
 def draw_box(self, y, x, height, width, title=None, title_attr=0):
-    """
+    \"\"\"
     Safely draw a box on the screen.
     
     Args:
@@ -93,7 +93,7 @@ def draw_box(self, y, x, height, width, title=None, title_attr=0):
         width: Box width
         title: Optional box title
         title_attr: Title text attributes
-    """
+    \"\"\"
     max_y, max_x = self.screen.getmaxyx()
     
     # Check if box is completely off-screen
@@ -129,7 +129,7 @@ def draw_box(self, y, x, height, width, title=None, title_attr=0):
     # Add title if provided
     if title and len(title) < width - 4:
         self.safe_addstr(y, x + 2, title, title_attr)
-"""
+'''
 
 if __name__ == "__main__":
     apply_display_fixes()

@@ -1,17 +1,19 @@
 # Alpaca Quantitative Trading System
 
-A comprehensive quantitative trading system for stocks and options using the Alpaca API.
+A comprehensive, production-ready quantitative trading system for stocks and options using the Alpaca API with advanced MACD strategies and real-time market data integration.
 
 ## Overview
 
-This system provides a framework for algorithmic trading of stocks and options using the Alpaca API. It includes:
+This system provides a complete algorithmic trading infrastructure featuring:
 
-- Stock trading with various technical analysis strategies
-- Real-time MACD-based trading with live market data
-- Options trading strategies (covered calls, cash-secured puts, iron condors)
-- Risk management and position sizing
-- Customizable strategy parameters
-- Logging and performance tracking
+- **Real-time MACD-based trading** with live market data streams
+- **Dual-mode architecture**: Stock trading and sophisticated options trading
+- **Multiple data sources**: Alpaca API (primary) with Yahoo Finance fallback
+- **Advanced risk management** with position sizing and portfolio limits
+- **Extended hours trading** support (pre-market, after-hours, overnight)
+- **Real-time monitoring** with terminal and web-based interfaces
+- **State persistence** and robust error recovery
+- **Comprehensive logging** and performance tracking
 
 ## Getting Started
 
@@ -24,43 +26,47 @@ This system provides a framework for algorithmic trading of stocks and options u
 ### Installation
 
 1. Clone this repository:
-   ```
+   ```bash
    git clone <repository-url>
-   cd Stock
+   cd "Quant Trading"
    ```
 
 2. Install the required dependencies:
-   ```
+   ```bash
    pip install -r requirements.txt
    ```
 
-3. Copy the example environment file and update it with your Alpaca API credentials:
+3. Set up your environment variables:
+   ```bash
+   cp .env.example .env  # If .env.example exists
+   # Or create .env file with your Alpaca API credentials
    ```
-   cp .env.example .env
+   
+   Required environment variables in `.env`:
+   ```env
+   ALPACA_API_KEY=your_api_key_here
+   ALPACA_API_SECRET=your_api_secret_here
+   ALPACA_BASE_URL=https://paper-api.alpaca.markets  # For paper trading
+   # ALPACA_BASE_URL=https://api.alpaca.markets      # For live trading
    ```
-   Then edit the `.env` file with your actual API credentials.
 
 ## Usage
 
-### Basic Stock Trading
+### Stock Trading System
 
-Run the main trading script:
-
-```
+**Main Stock Trading (Multiple Strategies):**
+```bash
 python main.py
 ```
+Executes various technical analysis strategies including MACD, RSI, Bollinger Bands, and Moving Average Crossover on default stocks (AAPL, MSFT, AMZN, GOOGL, META).
 
-This will execute the default moving average crossover strategy on a set of default stocks (AAPL, MSFT, AMZN, GOOGL, META).
-
-### Integrated MACD Trading System
-
-Run the integrated MACD trading system that connects real-time quotes with trading execution:
-
-```
+**Real-Time MACD Trading (Recommended):**
+```bash
 python integrated_macd_trader.py --symbol NVDA --warmup 30 --interval 60 --shares 100
 ```
+The primary trading system that integrates real-time quote monitoring, MACD calculation, and trade execution into a single workflow.
 
-This system combines real-time quote monitoring, MACD calculation, and trade execution into a single workflow. Options:
+**Command Line Options for Integrated MACD Trading:**
 - `--symbol`: Stock symbol to trade (default: NVDA)
 - `--interval`: Seconds between quote fetches (default: 60)
 - `--shares`: Number of shares per trade (default: 100)
@@ -70,118 +76,96 @@ This system combines real-time quote monitoring, MACD calculation, and trade exe
 - `--extended-hours`: Enable trading during pre-market and after-hours
 - `--warmup`: Data collection period before trading in minutes (default: 60)
 
-### Enhanced Quote Monitoring
+### Options Trading System
 
-Monitor real-time bid and ask prices with improved timestamp handling:
-
+**Advanced Options Trading with MACD:**
+```bash
+cd MACD_option_trading
+python main.py
 ```
+Sophisticated options trading system with MACD-based strategies, Greeks tracking, and automated contract management.
+
+### Real-Time Monitoring
+
+**Enhanced Quote Monitoring:**
+```bash
 python enhanced_quote_monitor.py --symbol NVDA --interval 60
 ```
+Advanced real-time monitoring with improved timestamp handling and reliable MACD calculations.
 
-This enhanced version ensures proper timestamp management and reliable MACD calculations. Options:
-- `--symbol`: Stock symbol to monitor (default: NVDA)
-- `--interval`: Seconds between quote fetches (default: 60)
-- `--max-records`: Maximum number of records to keep (default: 200)
-
-### Options Trading
-
-Run the options trading script:
-
+**Yahoo Finance Quote Monitoring:**
+```bash
+python yahoo_quote_monitor.py --symbol NVDA --interval 60
 ```
-python options_trading.py
-```
+Alternative data source monitoring using Yahoo Finance API.
 
-By default, this will execute a covered call strategy on the same set of default stocks.
+### Testing and Development
 
-### Real-Time Quote Monitoring (Original Version)
+**Run Tests:**
+```bash
+# Market hours testing
+python MACD_option_trading/test_market_hours.py
 
-Monitor real-time bid and ask prices for a specific stock:
+# Display system testing
+python MACD_option_trading/test_display.py
 
-```
-python quote_monitor.py --symbol NVDA --interval 60
+# Run all tests with pytest
+pytest
 ```
 
-This will fetch quotes every 60 seconds and display them in a formatted table. Options:
-- `--symbol`: Stock symbol to monitor (default: AAPL)
-- `--interval`: Seconds between quote fetches (default: 60)
-- `--max-records`: Maximum number of records to keep (default: 100)
+**Background Services:**
+```bash
+# Continuous options trading service
+python MACD_option_trading/continuous_options_trader_service.py
 
-### Real-Time MACD Trading (Original Version)
-
-Execute MACD-based trades using real-time quote data:
-
+# Web-based monitoring interface
+python MACD_option_trading/web_display.py
 ```
-python realtime_macd_trader.py --symbol NVDA --interval 60
-```
-
-This will fetch quotes, calculate MACD indicators, and execute trades based on MACD signals. Options:
-- `--symbol`: Stock symbol to trade (default: NVDA)
-- `--interval`: Seconds between quote fetches (default: 60)
-- `--shares`: Number of shares per trade (default: 100)
-- `--fast-window`: Fast EMA window (default: 13)
-- `--slow-window`: Slow EMA window (default: 21)
-- `--signal-window`: Signal line window (default: 9)
 
 ### Customizing Strategies
 
-You can modify the strategies used by editing the scripts or by creating your own strategy classes in the `strategies.py` module.
+Strategies can be customized by editing the `strategies.py` module or creating new strategy classes. The system supports multiple technical analysis approaches beyond MACD.
 
-## System Components
+## System Architecture
 
-### main.py
+### Core Components
 
-The main entry point for stock trading. It initializes the trading system, connects to the Alpaca API, and executes trading strategies.
+**Stock Trading System (`/`):**
+- `main.py` - Primary entry point with multiple strategy support
+- `integrated_macd_trader.py` - Complete real-time MACD trading system
+- `strategies.py` - Technical analysis strategies library
+- `enhanced_quote_monitor.py` - Real-time quote monitoring with enhanced features
 
-### integrated_macd_trader.py
+**Options Trading System (`MACD_option_trading/`):**
+- `main.py` - Options trading main entry point
+- `macd_options_strategy.py` - MACD strategy adapted for options
+- `options_trader.py` - Options contract management and execution
+- `continuous_options_trader_service.py` - Background trading service
 
-A complete end-to-end trading system that integrates real-time quote monitoring, MACD calculation, and trade execution:
-- Fetches real-time bid/ask quotes from Alpaca API
-- Calculates MACD indicators on the fly
-- Executes trades based on MACD crossovers and position changes
-- Includes a warm-up period for gathering sufficient data
-- Manages trade state and position transitions
-- Supports extended hours trading
-- Prevents over-trading with time-based throttling
+**Real-Time Data Infrastructure:**
+- `yahoo_quote_monitor.py` - Yahoo Finance data integration
+- `quote_monitor_selector.py` - Intelligent data source selection
+- `real_time_display.py` - Terminal-based monitoring interface
+- `web_display.py` - Browser-based monitoring dashboard
 
-### enhanced_quote_monitor.py
+### Key Features
 
-An improved version of the quote monitor with better timestamp handling:
-- Ensures each quote has a unique timestamp
-- Properly tracks real-time data
-- Improved MACD calculation stability
-- Better display of MACD signals and position data
-- More robust error handling
+**Multi-Source Data Integration:**
+- Primary: Alpaca API with WebSocket streaming
+- Fallback: Yahoo Finance for reliability
+- Automatic source switching and error recovery
 
-### options_trading.py
+**Advanced MACD Implementation:**
+- Real-time calculation with live bid/ask data
+- Crossover/crossunder signal detection
+- Position state management with transitions
+- Time-based throttling to prevent overtrading
 
-Specialized module for options trading strategies including covered calls, cash-secured puts, and iron condors.
-
-### strategies.py
-
-Contains various trading strategy implementations:
-- Moving Average Crossover
-- RSI (Relative Strength Index)
-- Bollinger Bands
-- MACD (Moving Average Convergence Divergence)
-- Enhanced MACD with real-time quote support
-
-### quote_monitor.py
-
-A standalone tool for monitoring real-time bid and ask prices for specified stocks:
-- Fetches real-time quotes from Alpaca API
-- Maintains a rolling window of the most recent quotes (default: 100)
-- Calculates and displays bid-ask spreads
-- Computes MACD indicators in real-time based on mid-prices
-- Saves quote data to CSV for later analysis
-
-### realtime_macd_trader.py
-
-An integrated real-time trading system that combines quote monitoring with MACD-based trading:
-- Uses live bid/ask data instead of historical OHLC data
-- Calculates MACD indicators in real-time
-- Executes trades based on MACD crossovers and position changes
-- Supports extended hours and overnight trading
-- Adapts limit prices based on current bid-ask spreads
+**Extended Trading Hours:**
+- Pre-market: 4:00 AM - 9:30 AM ET
+- Regular: 9:30 AM - 4:00 PM ET  
+- After-hours: 4:00 PM - 8:00 PM ET
+- Overnight: 8:00 PM - 4:00 AM ET
 
 ## MACD Trading Strategy Details
 
@@ -223,34 +207,106 @@ The MACD (Moving Average Convergence Divergence) strategy implemented in this sy
 
 ## Configuration
 
-The system is configured through environment variables in the `.env` file:
+### Environment Variables
 
+Configure the system through environment variables in the `.env` file:
+
+**Required:**
 - `ALPACA_API_KEY`: Your Alpaca API key
 - `ALPACA_API_SECRET`: Your Alpaca API secret
-- `ALPACA_BASE_URL`: API endpoint URL (paper or live trading)
-- `RISK_PER_TRADE`: Maximum risk per trade as a percentage of portfolio (default: 2%)
-- `MAX_POSITIONS`: Maximum number of concurrent positions (default: 5)
-- `EXTENDED_HOURS`: Enable trading during pre-market (4:00 AM - 9:30 AM ET) and after-hours (4:00 PM - 8:00 PM ET) sessions (default: True)
-- `OVERNIGHT_TRADING`: Enable trading during overnight sessions (8:00 PM - 4:00 AM ET) (default: True)
+- `ALPACA_BASE_URL`: API endpoint URL
+  - Paper trading: `https://paper-api.alpaca.markets`
+  - Live trading: `https://api.alpaca.markets`
+
+**Optional:**
+- `RISK_PER_TRADE`: Maximum risk per trade as percentage (default: 2%)
+- `MAX_POSITIONS`: Maximum concurrent positions (default: 5)
+- `EXTENDED_HOURS`: Enable pre-market and after-hours trading (default: True)
+- `OVERNIGHT_TRADING`: Enable overnight trading sessions (default: True)
+
+### Trading Mode Configuration
+
+The trading mode is controlled in the code (`main.py`):
+```python
+TRADING_MODE = "PAPER"  # Change to "LIVE" for live trading
+```
+
+### State Management
+
+The system persists trading state in JSON files:
+- Position files: `{SYMBOL}_position.json` (e.g., `NVDA_position.json`)
+- Strategy states: Stored in `/state/` directories
+- Configuration and logs: Separate files for tracking and debugging
 
 ## Risk Management
 
-The system includes built-in risk management features:
-- Position sizing based on account value and risk tolerance
-- Maximum position limits
-- Stop-loss calculations
-- Time-based trade throttling to prevent overtrading
+The system includes comprehensive built-in risk management:
 
-## Paper vs. Live Trading
+**Position Management:**
+- Dynamic position sizing based on account value and risk tolerance
+- Maximum position limits to prevent over-exposure
+- Automatic position transitions (long ↔ short) based on MACD signals
+- Time-based throttling (15-minute minimum) to prevent overtrading
 
-By default, the system uses Alpaca's paper trading environment. To switch to live trading:
+**Risk Controls:**
+- Portfolio-level risk monitoring
+- Per-trade risk limits via `RISK_PER_TRADE` setting
+- Extended hours trading with adjusted limit orders
+- Robust error handling and recovery mechanisms
 
-1. Update the `ALPACA_BASE_URL` in your `.env` file to `https://api.alpaca.markets`
-2. Ensure you have completed Alpaca's account setup for live trading
+**Market Hours Compliance:**
+- Automatic market schedule detection
+- Support for all trading sessions (regular, extended, overnight)
+- Holiday and weekend trading restrictions
+
+## Deployment Modes
+
+### Paper Trading (Default)
+```env
+ALPACA_BASE_URL=https://paper-api.alpaca.markets
+```
+Safe testing environment with simulated trading using real market data.
+
+### Live Trading
+```env
+ALPACA_BASE_URL=https://api.alpaca.markets
+```
+**⚠️ Warning**: Real money trading. Ensure you:
+1. Have completed Alpaca's live trading account setup
+2. Understand the risks involved
+3. Have thoroughly tested your strategies in paper mode
+4. Set appropriate risk limits
+
+## Dependencies
+
+Key dependencies (see `requirements.txt` for complete list):
+
+- **Trading & Data**: `alpaca-py>=0.8.0`, `yfinance>=0.2.0`
+- **Analysis**: `pandas>=2.0.0`, `numpy>=1.24.0`, `scikit-learn==1.3.0`
+- **Visualization**: `matplotlib>=3.7.0`
+- **Infrastructure**: `python-dotenv>=1.0.0`, `websocket-client==1.6.1`
+- **Testing**: `pytest==7.4.0`
+- **Backtesting**: `backtrader==1.9.78.123`
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Test thoroughly in paper trading mode
+4. Commit your changes (`git commit -m 'Add amazing feature'`)
+5. Push to the branch (`git push origin feature/amazing-feature`)
+6. Open a Pull Request
+
+## Support
+
+For questions and support:
+- Review the code documentation and comments
+- Check the log files for debugging information
+- Test in paper trading mode before live deployment
 
 ## Disclaimer
 
-This software is for educational and informational purposes only. It is not financial advice. Trading stocks and options involves significant risk of loss. Use at your own risk.
+**⚠️ Important**: This software is for educational and informational purposes only. It is not financial advice. Trading stocks and options involves significant risk of financial loss. Past performance does not guarantee future results. Use at your own risk and only with funds you can afford to lose.
 
 ## License
 

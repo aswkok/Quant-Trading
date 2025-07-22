@@ -918,6 +918,69 @@ class AlpacaTradingSystem:
             logger.error(f"Error checking account eligibility: {e}")
             return False, False, f"Error checking account: {e}"
     
+    def check_day_trading_buying_power(self, symbol, qty, side):
+        """Check if account has sufficient day trading buying power for the order.
+        
+        Args:
+            symbol: The stock symbol
+            qty: Quantity of shares
+            side: Buy or sell side
+            
+        Returns:
+            tuple: (can_trade: bool, error_message: str)
+        """
+        try:
+            account = self.trading_client.get_account()
+            
+            # Get day trading buying power (if available)
+            dt_buying_power = getattr(account, 'daytrading_buying_power', 0)
+            if dt_buying_power is None:
+                dt_buying_power = 0
+            
+            dt_buying_power = float(dt_buying_power)
+            total_buying_power = float(account.buying_power)
+            portfolio_value = float(account.portfolio_value)
+            
+            # For short sells, we need day trading buying power
+            if side == OrderSide.SELL and qty > 0:  # This is a short sell
+                if dt_buying_power <= 0:
+                    return False, f"Short selling requires day trading buying power. Current: $0, Account has ${total_buying_power} total buying power but no day trading power."
+                
+                # Estimate required buying power for short sell (roughly stock price * quantity)
+                try:
+                    quote_request = StockLatestQuoteRequest(symbol_or_symbols=[symbol])
+                    quotes = self.data_client.get_stock_latest_quote(quote_request)
+                    if symbol in quotes:
+                        current_price = float(quotes[symbol].ask_price)
+                        estimated_cost = current_price * qty
+                        
+                        if estimated_cost > dt_buying_power:
+                            return False, f"Insufficient day trading buying power for short sell. Need ~${estimated_cost:.2f}, have ${dt_buying_power:.2f}"
+                except Exception as quote_error:
+                    logger.warning(f"Could not get quote for buying power check: {quote_error}")
+                    # Continue without precise cost calculation
+            
+            # For regular buys, check total buying power
+            elif side == OrderSide.BUY:
+                try:
+                    quote_request = StockLatestQuoteRequest(symbol_or_symbols=[symbol])
+                    quotes = self.data_client.get_stock_latest_quote(quote_request)
+                    if symbol in quotes:
+                        current_price = float(quotes[symbol].ask_price)
+                        estimated_cost = current_price * qty
+                        
+                        if estimated_cost > total_buying_power:
+                            return False, f"Insufficient buying power for purchase. Need ~${estimated_cost:.2f}, have ${total_buying_power:.2f}"
+                except Exception as quote_error:
+                    logger.warning(f"Could not get quote for buying power check: {quote_error}")
+                    # Continue without precise cost calculation
+            
+            return True, "OK"
+            
+        except Exception as e:
+            logger.warning(f"Could not check buying power: {e}")
+            return True, "Could not verify buying power, proceeding with order"
+    
     def place_market_order(self, symbol, qty, side, extended_hours=None, limit_price=None):
         """Place a market order with support for extended hours trading.
         
@@ -928,6 +991,19 @@ class AlpacaTradingSystem:
             extended_hours: Override the default extended hours setting (optional)
             limit_price: Specific limit price to use (required for extended hours)
         """
+        # Pre-flight check for day trading buying power
+        can_trade, power_message = self.check_day_trading_buying_power(symbol, qty, side)
+        if not can_trade:
+            logger.error(f"🚨 PRE-FLIGHT CHECK FAILED: {power_message}")
+            logger.error("💡 SUGGESTED SOLUTIONS:")
+            if side == OrderSide.SELL:
+                logger.error("1. Switch to LONG-ONLY strategy (disable short selling)")
+                logger.error("2. Use smaller position sizes")
+                logger.error("3. Wait for existing positions to settle")
+            else:
+                logger.error("1. Reduce position size")
+                logger.error("2. Check for unsettled funds")
+            return None
         # Check if we should use extended hours
         use_extended_hours = self.extended_hours if extended_hours is None else extended_hours
         
@@ -1080,7 +1156,41 @@ class AlpacaTradingSystem:
             logger.info(f"Order placed during {session_type} - Symbol: {symbol}, Side: {side}, Qty: {qty}, Order ID: {order.id}")
             return order.id
         except Exception as e:
+            error_str = str(e)
             logger.error(f"Error placing order: {e}")
+            
+            # Handle specific day trading buying power errors
+            if "daytrading_buying_power" in error_str or "40310000" in error_str:
+                logger.error("🚨 DAY TRADING BUYING POWER ERROR DETECTED!")
+                logger.error("This error occurs when:")
+                logger.error("1. Your account doesn't meet PDT (Pattern Day Trader) requirements")
+                logger.error("2. You've exceeded your day trading buying power limit")
+                logger.error("3. You're trying to short sell without sufficient margin")
+                
+                # Get account info to help with debugging
+                try:
+                    account = self.trading_client.get_account()
+                    logger.error(f"Account Status:")
+                    logger.error(f"  • Total Buying Power: ${account.buying_power}")
+                    logger.error(f"  • Day Trading Buying Power: ${getattr(account, 'daytrading_buying_power', 'N/A')}")
+                    logger.error(f"  • Portfolio Value: ${account.portfolio_value}")
+                    logger.error(f"  • Cash: ${account.cash}")
+                    logger.error(f"  • Day Trade Count: {account.daytrade_count}")
+                    logger.error(f"  • Pattern Day Trader: {getattr(account, 'pattern_day_trader', 'Unknown')}")
+                    
+                    # Suggest solutions
+                    logger.error("💡 SOLUTIONS:")
+                    if side == OrderSide.SELL and qty > 0:  # This is likely a short sell
+                        logger.error("1. DISABLE SHORT SELLING: Short selling requires day trading buying power")
+                        logger.error("   - Modify your strategy to only use BUY orders")
+                        logger.error("   - Set strategy to 'long-only' mode")
+                    logger.error("2. REDUCE POSITION SIZE: Try smaller quantities (e.g., 10-50 shares)")
+                    logger.error("3. WAIT FOR SETTLEMENT: Some positions may need time to settle")
+                    logger.error("4. CHECK PDT STATUS: Ensure your account meets $25k minimum for unlimited day trading")
+                    
+                except Exception as account_error:
+                    logger.error(f"Could not retrieve account details: {account_error}")
+                
             return None
     
     def run_strategy(self, symbol, strategy_name="macd", **strategy_params):

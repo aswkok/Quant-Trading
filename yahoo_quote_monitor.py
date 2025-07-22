@@ -376,8 +376,12 @@ class YahooQuoteMonitor:
         # Log the new quote for debugging
         logger.debug(f"Adding new quote: {timestamp}, bid=${bid_price:.2f}, ask=${ask_price:.2f}, mid=${mid_price:.2f}")
         
-        # Append to dataframe
-        self.quotes_df = pd.concat([self.quotes_df, new_row], ignore_index=True)
+        # Append to dataframe - use proper concatenation for future compatibility
+        if self.quotes_df.empty:
+            # Initialize DataFrame with proper column types
+            self.quotes_df = new_row.copy()
+        else:
+            self.quotes_df = pd.concat([self.quotes_df, new_row], ignore_index=True)
         
         # Trim to max_records
         if len(self.quotes_df) > self.max_records:

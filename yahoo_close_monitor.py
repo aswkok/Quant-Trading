@@ -284,8 +284,12 @@ class YahooCloseQuoteMonitor(YahooQuoteMonitor):
         # Log the new quote for debugging
         logger.debug(f"Adding new quote: {timestamp}, bid=${bid_price:.2f}, ask=${ask_price:.2f}, close=${close_price:.2f}")
         
-        # Append to dataframe
-        self.quotes_df = pd.concat([self.quotes_df, new_row], ignore_index=True)
+        # Append to dataframe - use _append for better future compatibility
+        if self.quotes_df.empty:
+            # Initialize DataFrame with proper column types
+            self.quotes_df = new_row.copy()
+        else:
+            self.quotes_df = pd.concat([self.quotes_df, new_row], ignore_index=True)
         
         # Trim to max_records
         if len(self.quotes_df) > self.max_records:
@@ -293,6 +297,9 @@ class YahooCloseQuoteMonitor(YahooQuoteMonitor):
             
         # Calculate MACD if we have enough data
         self.calculate_macd()
+        
+        # Apply Enhanced MACD calculations if we have a connected strategy and enough data
+        self._update_enhanced_macd_for_new_data()
     
     def calculate_macd(self):
         """
@@ -427,9 +434,225 @@ class YahooCloseQuoteMonitor(YahooQuoteMonitor):
             display_df['Signal'] = recent_quotes['Signal'].apply(lambda x: f"{x:.4f}")
             display_df['Hist'] = recent_quotes['Histogram'].apply(lambda x: f"{x:.4f}")
             display_df['Pos'] = recent_quotes['MACD_position']
+            
+            # Add Enhanced MACD columns using the same strategy calculations used for trading
+            # Check if Enhanced MACD data already exists (from strategy execution)
+            enhanced_columns = ['MACD_slope', 'Histogram_avg', 'signal', 'action', 'trigger_reason']
+            if any(col in self.quotes_df.columns for col in enhanced_columns):
+                # Use existing Enhanced MACD data from strategy
+                if 'MACD_slope' in self.quotes_df.columns:
+                    display_df['Slope'] = recent_quotes.get('MACD_slope', pd.Series()).apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                if 'Histogram_avg' in self.quotes_df.columns:
+                    display_df['HistAvg'] = recent_quotes.get('Histogram_avg', pd.Series()).apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                if 'action' in self.quotes_df.columns:
+                    # Use the actual trading actions from the strategy with Enhanced MACD case indicators
+                    display_df['Action'] = recent_quotes.apply(lambda row: 
+                        '🅰️ BUY' if row.get('action') == 'BUY' and 'CROSSOVER' in str(row.get('trigger_reason', '')) else
+                        '🅰️ BUY-MOMENTUM' if row.get('action') == 'BUY' and 'MOMENTUM_STRENGTHENING_LONG_ONLY' in str(row.get('trigger_reason', '')) else
+                        '🅰️ SHORT' if row.get('action') == 'SHORT' and 'CROSSUNDER' in str(row.get('trigger_reason', '')) else
+                        '🅱️ SELL+SHORT' if row.get('action') == 'SELL_AND_SHORT' and 'MOMENTUM_WEAKENING' in str(row.get('trigger_reason', '')) else
+                        '🅱️ FAILSAFE-EXIT' if row.get('action') == 'SELL_AND_SHORT' and 'FAILSAFE_CROSSUNDER' in str(row.get('trigger_reason', '')) else
+                        '🅲️ COVER+BUY' if row.get('action') == 'COVER_AND_BUY' and 'MOMENTUM_STRENGTHENING' in str(row.get('trigger_reason', '')) else
+                        '🅲️ FAILSAFE-EXIT' if row.get('action') == 'COVER_AND_BUY' and 'FAILSAFE_CROSSOVER' in str(row.get('trigger_reason', '')) else
+                        '🚀 BUY' if row.get('action') == 'BUY' else
+                        '📉 SHORT' if row.get('action') == 'SHORT' else
+                        '🔄 SELL+SHORT' if row.get('action') == 'SELL_AND_SHORT' else
+                        '🔄 COVER+BUY' if row.get('action') == 'COVER_AND_BUY' else
+                        '⚡ WEAK' if row.get('trigger_reason') == 'MOMENTUM_WEAKENING' else
+                        '⚡ STRONG' if row.get('trigger_reason') == 'MOMENTUM_STRENGTHENING' else
+                        '🚀 BUY' if row.get('crossover', False) else 
+                        '📉 SELL' if row.get('crossunder', False) else 
+                        '➖ HOLD', axis=1)
+                    
+                    # Add momentum column based on trigger reasons with Enhanced MACD cases
+                    display_df['Momentum'] = recent_quotes.apply(lambda row:
+                        'WEAK' if row.get('trigger_reason') == 'MOMENTUM_WEAKENING' else
+                        'STRONG' if row.get('trigger_reason') == 'MOMENTUM_STRENGTHENING' else
+                        'FAILSAFE' if 'FAILSAFE' in str(row.get('trigger_reason', '')) else
+                        'BULLISH' if row.get('trigger_reason') == 'MACD_CROSSOVER' else
+                        'BEARISH' if row.get('trigger_reason') == 'MACD_CROSSUNDER' else
+                        'NEUTRAL', axis=1)
+            else:
+                # Fallback: Generate Enhanced MACD data using the same strategy method as CSV export
+                # Only do this if we have enough data
+                if len(self.quotes_df) > 30:
+                    self._add_enhanced_macd_for_display()
+                    
+                    # Now try to use the generated data for display
+                    if 'MACD_slope' in self.quotes_df.columns:
+                        display_df['Slope'] = recent_quotes.get('MACD_slope', pd.Series()).apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                    if 'Histogram_avg' in self.quotes_df.columns:
+                        display_df['HistAvg'] = recent_quotes.get('Histogram_avg', pd.Series()).apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                    if 'action' in self.quotes_df.columns:
+                        # Use the same Enhanced MACD display logic as above  
+                        display_df['Action'] = recent_quotes.apply(lambda row: 
+                            '🅰️ BUY' if row.get('action') == 'BUY' and 'CROSSOVER' in str(row.get('trigger_reason', '')) else
+                            '🅰️ BUY-MOMENTUM' if row.get('action') == 'BUY' and 'MOMENTUM_STRENGTHENING_LONG_ONLY' in str(row.get('trigger_reason', '')) else
+                            '🅰️ SHORT' if row.get('action') == 'SHORT' and 'CROSSUNDER' in str(row.get('trigger_reason', '')) else
+                            '🅱️ SELL+SHORT' if row.get('action') == 'SELL_AND_SHORT' and 'MOMENTUM_WEAKENING' in str(row.get('trigger_reason', '')) else
+                            '🅱️ FAILSAFE-EXIT' if row.get('action') == 'SELL_AND_SHORT' and 'FAILSAFE_CROSSUNDER' in str(row.get('trigger_reason', '')) else
+                            '🅲️ COVER+BUY' if row.get('action') == 'COVER_AND_BUY' and 'MOMENTUM_STRENGTHENING' in str(row.get('trigger_reason', '')) else
+                            '🅲️ FAILSAFE-EXIT' if row.get('action') == 'COVER_AND_BUY' and 'FAILSAFE_CROSSOVER' in str(row.get('trigger_reason', '')) else
+                            '🚀 BUY' if row.get('action') == 'BUY' else
+                            '📉 SHORT' if row.get('action') == 'SHORT' else
+                            '🔄 SELL+SHORT' if row.get('action') == 'SELL_AND_SHORT' else
+                            '🔄 COVER+BUY' if row.get('action') == 'COVER_AND_BUY' else
+                            '⚡ WEAK' if row.get('trigger_reason') == 'MOMENTUM_WEAKENING' else
+                            '⚡ STRONG' if row.get('trigger_reason') == 'MOMENTUM_STRENGTHENING' else
+                            '🚀 BUY' if row.get('crossover', False) else 
+                            '📉 SELL' if row.get('crossunder', False) else 
+                            '➖ HOLD', axis=1)
+                        
+                        display_df['Momentum'] = recent_quotes.apply(lambda row:
+                            'WEAK' if row.get('trigger_reason') == 'MOMENTUM_WEAKENING' else
+                            'STRONG' if row.get('trigger_reason') == 'MOMENTUM_STRENGTHENING' else
+                            'FAILSAFE' if 'FAILSAFE' in str(row.get('trigger_reason', '')) else
+                            'BULLISH' if row.get('trigger_reason') == 'MACD_CROSSOVER' else
+                            'BEARISH' if row.get('trigger_reason') == 'MACD_CROSSUNDER' else
+                            'NEUTRAL', axis=1)
         
         # Display the table
         print(tabulate(display_df, headers='keys', tablefmt='pretty', showindex=False))
+    
+    def _calculate_display_macd_slope(self, data, lookback=3):
+        """Calculate MACD slope for display purposes."""
+        slopes = pd.Series(index=data.index, dtype=float)
+        
+        for i in range(lookback-1, len(data)):
+            if i >= lookback-1:
+                recent_macd = data['MACD'].iloc[i-lookback+1:i+1].values
+                if len(recent_macd) >= 2 and not pd.isna(recent_macd).any():
+                    # Simple linear slope calculation
+                    slope = (recent_macd[-1] - recent_macd[0]) / (len(recent_macd) - 1)
+                    slopes.iloc[i] = slope
+        
+        return slopes
+    
+    def _calculate_display_histogram_avg(self, data, lookback=3):
+        """Calculate histogram rolling average for display purposes."""
+        return data['Histogram'].rolling(window=lookback, min_periods=1).mean()
+    
+    def _calculate_display_momentum(self, data, slope_threshold=0.001):
+        """Calculate momentum signals for display purposes."""
+        momentum = pd.Series(index=data.index, dtype=str)
+        
+        for i in range(len(data)):
+            row = data.iloc[i]
+            
+            if pd.isna(row.get('MACD_slope')) or pd.isna(row.get('Hist_avg')):
+                momentum.iloc[i] = 'N/A'
+                continue
+                
+            macd_position = row.get('MACD_position', '')
+            slope = row.get('MACD_slope', 0)
+            histogram = row.get('Histogram', 0)
+            hist_avg = row.get('Hist_avg', 0)
+            
+            if macd_position == 'ABOVE':
+                # Long position analysis
+                is_slope_weak = slope < slope_threshold
+                is_histogram_weak = histogram < hist_avg
+                if is_slope_weak and is_histogram_weak:
+                    momentum.iloc[i] = 'WEAK'
+                else:
+                    momentum.iloc[i] = 'STRONG'
+            elif macd_position == 'BELOW':
+                # Short position analysis
+                is_slope_strong = slope > -slope_threshold
+                is_histogram_strong = abs(histogram) < abs(hist_avg)
+                if is_slope_strong and is_histogram_strong:
+                    momentum.iloc[i] = 'STRONG'
+                else:
+                    momentum.iloc[i] = 'WEAK'
+            else:
+                momentum.iloc[i] = 'NEUTRAL'
+        
+        return momentum
+    
+    def _add_enhanced_macd_for_display(self):
+        """
+        Add Enhanced MACD data using the same strategy calculations used for trading and CSV export.
+        This ensures consistency between display, trading decisions, and saved data.
+        """
+        try:
+            # Import here to avoid circular imports
+            from strategies import EnhancedMACDStrategy
+            
+            # Create a temporary Enhanced MACD strategy with same parameters
+            temp_strategy = EnhancedMACDStrategy(
+                fast_window=self.fast_window,
+                slow_window=self.slow_window,
+                signal_window=self.signal_window
+            )
+            
+            # Convert quotes_df to the format expected by strategy
+            strategy_data = self.quotes_df.copy()
+            strategy_data['close'] = self.quotes_df['close']  # Use close price
+            strategy_data['open'] = self.quotes_df['close']
+            strategy_data['high'] = self.quotes_df['close']
+            strategy_data['low'] = self.quotes_df['close']
+            strategy_data['volume'] = 100000  # Placeholder volume
+            
+            # Generate Enhanced MACD signals using the SAME method as CSV export
+            enhanced_signals = temp_strategy.generate_signals(strategy_data)
+            
+            # Add Enhanced MACD columns to the main dataframe
+            enhanced_columns = [
+                'MACD_slope', 'Histogram_avg', 'Histogram_abs_avg',
+                'signal', 'position', 'position_type', 'shares', 
+                'action', 'trigger_reason'
+            ]
+            
+            for col in enhanced_columns:
+                if col in enhanced_signals.columns:
+                    self.quotes_df[col] = enhanced_signals[col]
+                    
+        except Exception as e:
+            logger.warning(f"Could not add Enhanced MACD data for display: {e}")
+            # Continue without Enhanced MACD columns
+    
+    def _update_enhanced_macd_for_new_data(self):
+        """
+        Lightweight update of Enhanced MACD calculations for new data points only.
+        This avoids recalculating the entire dataset on every new quote.
+        """
+        # Only update if we have enough data and don't already have Enhanced MACD columns
+        if len(self.quotes_df) < 30:
+            return
+            
+        # Check if Enhanced MACD columns exist and if the latest rows need updating
+        enhanced_columns = ['MACD_slope', 'Histogram_avg', 'action', 'trigger_reason']
+        has_enhanced_columns = any(col in self.quotes_df.columns for col in enhanced_columns)
+        
+        # If we don't have Enhanced MACD columns yet, generate them once
+        if not has_enhanced_columns:
+            try:
+                self._add_enhanced_macd_for_display()
+            except Exception as e:
+                logger.debug(f"Could not add Enhanced MACD data: {e}")
+        
+        # If Enhanced MACD columns exist, check if latest rows are missing data
+        elif has_enhanced_columns:
+            # Check the last few rows to see if they have Enhanced MACD data
+            latest_rows = self.quotes_df.tail(3)
+            
+            # If the latest rows are missing Enhanced MACD data (showing as NaN or empty)
+            missing_enhanced_data = latest_rows['MACD_slope'].isna().any() if 'MACD_slope' in self.quotes_df.columns else True
+            
+            if missing_enhanced_data and len(self.quotes_df) > 50:
+                try:
+                    # Recalculate Enhanced MACD for the entire dataset to fill in missing values
+                    # This is more expensive but only happens when data is actually missing
+                    self._add_enhanced_macd_for_display()
+                except Exception as e:
+                    logger.debug(f"Could not update Enhanced MACD data: {e}")
+    
+    def set_enhanced_strategy(self, strategy):
+        """
+        Set the Enhanced MACD strategy instance for this monitor.
+        This allows the monitor to use the same strategy calculations as trading.
+        """
+        self.enhanced_strategy = strategy
 
 # Create an alias for compatibility with the existing system
 CloseQuoteMonitor = YahooCloseQuoteMonitor

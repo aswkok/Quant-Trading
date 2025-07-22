@@ -194,10 +194,27 @@ class EnhancedQuoteMonitor:
         try:
             # Check if it's a quote message
             if msg.get('T') == 'q' and msg.get('S') == self.symbol:
-                # Extract quote data
-                timestamp = datetime.fromtimestamp(msg.get('t') / 1e9, tz=timezone.utc)  # Convert nanoseconds to seconds
-                bid_price = float(msg.get('bp', 0))
-                ask_price = float(msg.get('ap', 0))
+                # Extract quote data with proper type conversion
+                try:
+                    # Handle different timestamp formats from Alpaca
+                    t_value = msg.get('t', 0)
+                    if isinstance(t_value, str):
+                        # ISO format: '2025-07-22T12:22:26.802804135Z'
+                        timestamp = datetime.fromisoformat(t_value.replace('Z', '+00:00'))
+                    else:
+                        # Nanosecond format: 1640995200000000000
+                        timestamp = datetime.fromtimestamp(float(t_value) / 1e9, tz=timezone.utc)
+                    
+                    bid_price = float(msg.get('bp', 0))
+                    ask_price = float(msg.get('ap', 0))
+                except (ValueError, TypeError) as e:
+                    logger.warning(f"Invalid quote data types - bp: {msg.get('bp')}, ap: {msg.get('ap')}, t: {msg.get('t')} - Error: {e}")
+                    return
+                
+                # Validate prices are positive numbers
+                if bid_price <= 0 or ask_price <= 0:
+                    logger.debug(f"Invalid price data - bid: {bid_price}, ask: {ask_price}")
+                    return
                 
                 # Calculate spread
                 spread = ask_price - bid_price
@@ -222,6 +239,9 @@ class EnhancedQuoteMonitor:
         
         except Exception as e:
             logger.error(f"Error processing WebSocket message: {e}")
+            logger.debug(f"Problematic message: {msg}")
+            import traceback
+            logger.debug(f"Full traceback: {traceback.format_exc()}")
     
     def get_latest_quote(self):
         """
@@ -245,7 +265,11 @@ class EnhancedQuoteMonitor:
         timestamp, bid_price, ask_price, spread, spread_pct = quote_data
         
         # Calculate mid price (average of bid and ask)
-        mid_price = (bid_price + ask_price) / 2
+        try:
+            mid_price = (float(bid_price) + float(ask_price)) / 2
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Error calculating mid price with bid: {bid_price}, ask: {ask_price} - Error: {e}")
+            return
         
         # Create a new row
         new_row = pd.DataFrame({
@@ -260,8 +284,12 @@ class EnhancedQuoteMonitor:
         # Log the new quote for debugging
         logger.debug(f"Adding new quote: {timestamp}, bid=${bid_price:.2f}, ask=${ask_price:.2f}, mid=${mid_price:.2f}")
         
-        # Append to dataframe
-        self.quotes_df = pd.concat([self.quotes_df, new_row], ignore_index=True)
+        # Append to dataframe - use proper concatenation for future compatibility
+        if self.quotes_df.empty:
+            # Initialize DataFrame with proper column types
+            self.quotes_df = new_row.copy()
+        else:
+            self.quotes_df = pd.concat([self.quotes_df, new_row], ignore_index=True)
         
         # Trim to max_records
         if len(self.quotes_df) > self.max_records:
@@ -300,15 +328,25 @@ class EnhancedQuoteMonitor:
         # Determine MACD position (above or below signal line)
         self.quotes_df['MACD_position'] = np.where(self.quotes_df['MACD'] > self.quotes_df['Signal'], 'ABOVE', 'BELOW')
         
-        # Calculate previous values for crossover detection
-        self.quotes_df['MACD_prev'] = self.quotes_df['MACD'].shift(1)
-        self.quotes_df['Signal_prev'] = self.quotes_df['Signal'].shift(1)
+        # Initialize crossover/crossunder columns
+        self.quotes_df['crossover'] = False
+        self.quotes_df['crossunder'] = False
         
-        # Detect crossovers and crossunders
-        self.quotes_df['crossover'] = (self.quotes_df['MACD'] > self.quotes_df['Signal']) & \
-                                     (self.quotes_df['MACD_prev'] <= self.quotes_df['Signal_prev'])
-        self.quotes_df['crossunder'] = (self.quotes_df['MACD'] < self.quotes_df['Signal']) & \
-                                      (self.quotes_df['MACD_prev'] >= self.quotes_df['Signal_prev'])
+        # Need at least 2 rows to detect crossovers
+        if len(self.quotes_df) >= 2:
+            # Get the current and previous positions
+            current_position = self.quotes_df.iloc[-1]['MACD_position']
+            previous_position = self.quotes_df.iloc[-2]['MACD_position']
+            
+            # Detect crossover (MACD crosses above signal)
+            if current_position == 'ABOVE' and previous_position == 'BELOW':
+                self.quotes_df.iloc[-1, self.quotes_df.columns.get_loc('crossover')] = True
+                logger.debug(f"MACD Crossover detected (BULLISH) at {self.quotes_df.iloc[-1]['timestamp']}")
+            
+            # Detect crossunder (MACD crosses below signal)
+            elif current_position == 'BELOW' and previous_position == 'ABOVE':
+                self.quotes_df.iloc[-1, self.quotes_df.columns.get_loc('crossunder')] = True
+                logger.debug(f"MACD Crossunder detected (BEARISH) at {self.quotes_df.iloc[-1]['timestamp']}")
         
         # Update the last MACD position
         if len(self.quotes_df) > 0:
@@ -428,18 +466,97 @@ class EnhancedQuoteMonitor:
             # Create a position indicator
             latest_quotes['Position'] = latest_quotes['MACD_position']
             
-            # Create a signal indicator
-            latest_quotes['Signal_Indicator'] = ''
-            latest_quotes.loc[latest_quotes['crossover'] == True, 'Signal_Indicator'] = '↑ BUY'
-            latest_quotes.loc[latest_quotes['crossunder'] == True, 'Signal_Indicator'] = '↓ SELL'
-            
-            # Display the table with MACD information
-            print(tabulate(
-                latest_quotes[['time', 'bid', 'ask', 'mid', 'MACD', 'Signal', 'Histogram', 'Position', 'Signal_Indicator']].iloc[::-1],
-                headers='keys',
-                tablefmt='pretty',
-                showindex=False
-            ))
+            # Add Enhanced MACD columns using the same strategy calculations used for trading
+            enhanced_columns = ['MACD_slope', 'Histogram_avg', 'signal', 'action', 'trigger_reason']
+            if any(col in self.quotes_df.columns for col in enhanced_columns):
+                # Use existing Enhanced MACD data from strategy
+                if 'MACD_slope' in self.quotes_df.columns:
+                    latest_quotes['Slope'] = latest_quotes.get('MACD_slope', pd.Series()).apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                if 'Histogram_avg' in self.quotes_df.columns:
+                    latest_quotes['HistAvg'] = latest_quotes.get('Histogram_avg', pd.Series()).apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                
+                # Add momentum and action based on strategy calculations
+                latest_quotes['Momentum'] = latest_quotes.apply(lambda row:
+                    'WEAK' if row.get('trigger_reason') == 'MOMENTUM_WEAKENING' else
+                    'STRONG' if row.get('trigger_reason') == 'MOMENTUM_STRENGTHENING' else
+                    'BULLISH' if row.get('trigger_reason') == 'MACD_CROSSOVER' else
+                    'BEARISH' if row.get('trigger_reason') == 'MACD_CROSSUNDER' else
+                    'NEUTRAL', axis=1)
+                
+                # Create enhanced signal indicator using actual strategy actions with case indicators
+                latest_quotes['Signal_Indicator'] = latest_quotes.apply(lambda row: 
+                    '🅰️ BUY' if row.get('action') == 'BUY' and 'CROSSOVER' in str(row.get('trigger_reason', '')) else
+                    '🅰️ BUY-MOMENTUM' if row.get('action') == 'BUY' and 'MOMENTUM_STRENGTHENING_LONG_ONLY' in str(row.get('trigger_reason', '')) else
+                    '🅰️ SHORT' if row.get('action') == 'SHORT' and 'CROSSUNDER' in str(row.get('trigger_reason', '')) else
+                    '🅱️ SELL+SHORT' if row.get('action') == 'SELL_AND_SHORT' and 'MOMENTUM_WEAKENING' in str(row.get('trigger_reason', '')) else
+                    '🅱️ FAILSAFE-EXIT' if row.get('action') == 'SELL_AND_SHORT' and 'FAILSAFE_CROSSUNDER' in str(row.get('trigger_reason', '')) else
+                    '🅲️ COVER+BUY' if row.get('action') == 'COVER_AND_BUY' and 'MOMENTUM_STRENGTHENING' in str(row.get('trigger_reason', '')) else
+                    '🅲️ FAILSAFE-EXIT' if row.get('action') == 'COVER_AND_BUY' and 'FAILSAFE_CROSSOVER' in str(row.get('trigger_reason', '')) else
+                    '🚀 BUY' if row.get('action') == 'BUY' else
+                    '📉 SHORT' if row.get('action') == 'SHORT' else
+                    '🔄 SELL+SHORT' if row.get('action') == 'SELL_AND_SHORT' else
+                    '🔄 COVER+BUY' if row.get('action') == 'COVER_AND_BUY' else
+                    '⚡ WEAK' if row.get('trigger_reason') == 'MOMENTUM_WEAKENING' else
+                    '⚡ STRONG' if row.get('trigger_reason') == 'MOMENTUM_STRENGTHENING' else
+                    '🚀 BUY' if row.get('crossover', False) else 
+                    '📉 SELL' if row.get('crossunder', False) else 
+                    '➖ HOLD', axis=1)
+                
+                # Display the table with Enhanced MACD information
+                display_columns = ['time', 'bid', 'ask', 'mid', 'MACD', 'Signal', 'Histogram', 'Slope', 'HistAvg', 'Momentum', 'Signal_Indicator']
+                available_columns = [col for col in display_columns if col in latest_quotes.columns]
+                
+                print(tabulate(
+                    latest_quotes[available_columns].iloc[::-1],
+                    headers='keys',
+                    tablefmt='pretty',
+                    showindex=False
+                ))
+            elif len(latest_quotes) >= 3:
+                # Fallback: Use basic Enhanced MACD calculations for display only
+                # (This path is less preferred as it may not match trading decisions)
+                # Calculate MACD slope for display
+                latest_quotes['MACD_slope'] = self._calculate_display_macd_slope(latest_quotes)
+                latest_quotes['Slope'] = latest_quotes['MACD_slope'].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                
+                # Calculate histogram averages for display
+                latest_quotes['Hist_avg'] = self._calculate_display_histogram_avg(latest_quotes)
+                latest_quotes['HistAvg'] = latest_quotes['Hist_avg'].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                
+                # Add momentum analysis signals
+                latest_quotes['Momentum'] = self._calculate_display_momentum(latest_quotes)
+                
+                # Create enhanced signal indicator
+                latest_quotes['Signal_Indicator'] = latest_quotes.apply(lambda row: 
+                    '🚀 BUY' if row.get('crossover', False) else 
+                    '📉 SELL' if row.get('crossunder', False) else 
+                    '⚡ WEAK' if row['Momentum'] == 'WEAK' else
+                    '⚡ STRONG' if row['Momentum'] == 'STRONG' else
+                    '➖ HOLD', axis=1)
+                
+                # Display the table with Enhanced MACD information
+                display_columns = ['time', 'bid', 'ask', 'mid', 'MACD', 'Signal', 'Histogram', 'Slope', 'HistAvg', 'Momentum', 'Signal_Indicator']
+                available_columns = [col for col in display_columns if col in latest_quotes.columns]
+                
+                print(tabulate(
+                    latest_quotes[available_columns].iloc[::-1],
+                    headers='keys',
+                    tablefmt='pretty',
+                    showindex=False
+                ))
+            else:
+                # Create a basic signal indicator
+                latest_quotes['Signal_Indicator'] = ''
+                latest_quotes.loc[latest_quotes['crossover'] == True, 'Signal_Indicator'] = '↑ BUY'
+                latest_quotes.loc[latest_quotes['crossunder'] == True, 'Signal_Indicator'] = '↓ SELL'
+                
+                # Display the table with basic MACD information
+                print(tabulate(
+                    latest_quotes[['time', 'bid', 'ask', 'mid', 'MACD', 'Signal', 'Histogram', 'Position', 'Signal_Indicator']].iloc[::-1],
+                    headers='keys',
+                    tablefmt='pretty',
+                    showindex=False
+                ))
             
             # Print connection status
             print(f"\nWebSocket connection status: {'Connected' if self.connected else 'Disconnected'}")
@@ -476,12 +593,13 @@ class EnhancedQuoteMonitor:
         
         print("=" * 80 + "\n")
     
-    def save_to_csv(self, filename=None):
+    def save_to_csv(self, filename=None, include_enhanced_macd=False):
         """
-        Save the current quotes to a CSV file.
+        Save the current quotes to a CSV file with optional Enhanced MACD strategy data.
         
         Args:
             filename: Optional filename, defaults to symbol_quotes_YYYYMMDD.csv
+            include_enhanced_macd: If True, includes Enhanced MACD strategy calculations
         """
         if self.quotes_df.empty:
             logger.info("No quotes to save.")
@@ -489,13 +607,216 @@ class EnhancedQuoteMonitor:
         
         if filename is None:
             today = datetime.now().strftime('%Y%m%d')
-            filename = f"{self.symbol}_quotes_{today}.csv"
+            suffix = "_enhanced_macd" if include_enhanced_macd else "_quotes"
+            filename = f"{self.symbol}{suffix}_{today}.csv"
         
         try:
-            self.quotes_df.to_csv(filename, index=False)
+            df_to_save = self.quotes_df.copy()
+            
+            # If Enhanced MACD data is requested and we have the necessary columns
+            if include_enhanced_macd:
+                logger.info("Adding Enhanced MACD strategy calculations to CSV export")
+                
+                # Import and apply Enhanced MACD strategy if not already applied
+                if not all(col in df_to_save.columns for col in ['MACD_slope', 'Histogram_avg', 'trigger_reason']):
+                    logger.info("Calculating Enhanced MACD strategy data for CSV export")
+                    
+                    # Import here to avoid circular imports
+                    from strategies import EnhancedMACDStrategy
+                    
+                    # Create a temporary Enhanced MACD strategy
+                    temp_strategy = EnhancedMACDStrategy(
+                        fast_window=self.fast_window,
+                        slow_window=self.slow_window,
+                        signal_window=self.signal_window
+                    )
+                    
+                    # Convert quotes_df to the format expected by strategy
+                    strategy_data = df_to_save.copy()
+                    strategy_data['close'] = df_to_save['mid']  # Use mid price as close
+                    strategy_data['open'] = df_to_save['mid']
+                    strategy_data['high'] = df_to_save['ask']
+                    strategy_data['low'] = df_to_save['bid'] 
+                    strategy_data['volume'] = 100000  # Placeholder volume
+                    
+                    # Generate Enhanced MACD signals
+                    enhanced_signals = temp_strategy.generate_signals(strategy_data)
+                    
+                    # Add Enhanced MACD columns to the dataframe
+                    enhanced_columns = [
+                        'MACD_slope', 'Histogram_avg', 'Histogram_abs_avg',
+                        'signal', 'position', 'position_type', 'shares', 
+                        'action', 'trigger_reason'
+                    ]
+                    
+                    for col in enhanced_columns:
+                        if col in enhanced_signals.columns:
+                            df_to_save[col] = enhanced_signals[col]
+                
+                # Reorder columns for better readability
+                column_order = [
+                    'timestamp', 'bid', 'ask', 'mid', 'spread', 'spread_pct',
+                    'EMAfast', 'EMAslow', 'MACD', 'Signal', 'Histogram',
+                    'MACD_slope', 'Histogram_avg', 'Histogram_abs_avg',
+                    'MACD_position', 'crossover', 'crossunder',
+                    'signal', 'position', 'position_type', 'shares',
+                    'action', 'trigger_reason'
+                ]
+                
+                # Only include columns that exist in the dataframe
+                available_columns = [col for col in column_order if col in df_to_save.columns]
+                remaining_columns = [col for col in df_to_save.columns if col not in available_columns]
+                
+                df_to_save = df_to_save[available_columns + remaining_columns]
+            
+            # Save to CSV
+            df_to_save.to_csv(filename, index=False)
+            
+            # Log summary of saved data
             logger.info(f"Quotes saved to {filename}")
+            logger.info(f"Total records: {len(df_to_save)}")
+            logger.info(f"Columns saved: {len(df_to_save.columns)}")
+            
+            if include_enhanced_macd:
+                # Provide summary of Enhanced MACD data
+                if 'action' in df_to_save.columns:
+                    buy_signals = (df_to_save['action'] == 'BUY').sum()
+                    sell_signals = (df_to_save['action'] == 'SHORT').sum()
+                    momentum_weak = (df_to_save['trigger_reason'] == 'MOMENTUM_WEAKENING').sum()
+                    momentum_strong = (df_to_save['trigger_reason'] == 'MOMENTUM_STRENGTHENING').sum()
+                    
+                    logger.info(f"Enhanced MACD Summary:")
+                    logger.info(f"  - BUY signals: {buy_signals}")
+                    logger.info(f"  - SHORT signals: {sell_signals}")
+                    logger.info(f"  - Momentum weakening signals: {momentum_weak}")
+                    logger.info(f"  - Momentum strengthening signals: {momentum_strong}")
+                
+                if 'crossover' in df_to_save.columns:
+                    crossovers = df_to_save['crossover'].sum()
+                    crossunders = df_to_save['crossunder'].sum()
+                    logger.info(f"  - MACD crossovers: {crossovers}")
+                    logger.info(f"  - MACD crossunders: {crossunders}")
+        
         except Exception as e:
             logger.error(f"Error saving quotes to CSV: {e}")
+            
+    def save_enhanced_macd_csv(self, filename=None):
+        """
+        Convenience method to save quotes with Enhanced MACD strategy data.
+        
+        Args:
+            filename: Optional filename, defaults to symbol_enhanced_macd_YYYYMMDD.csv
+        """
+        self.save_to_csv(filename=filename, include_enhanced_macd=True)
+    
+    def stop(self):
+        """
+        Stop the WebSocket connection and clean up resources.
+        """
+        try:
+            self.connected = False
+            if self.ws:
+                self.ws.close()
+                logger.info(f"WebSocket connection closed for {self.symbol}")
+        except Exception as e:
+            logger.error(f"Error stopping WebSocket connection: {e}")
+    
+    def diagnose_connection(self):
+        """
+        Diagnose WebSocket connection and data reception issues.
+        
+        Returns:
+            dict: Diagnosis information
+        """
+        diagnosis = {
+            'connection_status': 'Connected' if self.connected else 'Disconnected',
+            'quotes_received': len(self.quotes_df),
+            'last_quote_time': None,
+            'websocket_url': self.ws_url,
+            'symbol': self.symbol,
+            'recommendations': []
+        }
+        
+        if len(self.quotes_df) > 0:
+            diagnosis['last_quote_time'] = self.quotes_df.iloc[-1]['timestamp']
+        
+        # Add recommendations based on diagnosis
+        if not self.connected:
+            diagnosis['recommendations'].append("Check internet connection and Alpaca API credentials")
+        
+        if len(self.quotes_df) == 0:
+            diagnosis['recommendations'].append("No data received - check if market is open and symbol is valid")
+            
+        from datetime import datetime, timezone
+        import pytz
+        
+        # Check market hours
+        et_tz = pytz.timezone('US/Eastern')
+        now_et = datetime.now(et_tz)
+        weekday = now_et.weekday()
+        hour = now_et.hour
+        
+        if weekday >= 5:
+            diagnosis['recommendations'].append("Market is closed (weekend)")
+        elif not (4 <= hour <= 20):
+            diagnosis['recommendations'].append("Outside extended trading hours (4 AM - 8 PM ET)")
+        
+        return diagnosis
+    
+    def _calculate_display_macd_slope(self, data, lookback=3):
+        """Calculate MACD slope for display purposes."""
+        slopes = pd.Series(index=data.index, dtype=float)
+        
+        for i in range(lookback-1, len(data)):
+            if i >= lookback-1:
+                recent_macd = data['MACD'].iloc[i-lookback+1:i+1].values
+                if len(recent_macd) >= 2 and not pd.isna(recent_macd).any():
+                    # Simple linear slope calculation
+                    slope = (recent_macd[-1] - recent_macd[0]) / (len(recent_macd) - 1)
+                    slopes.iloc[i] = slope
+        
+        return slopes
+    
+    def _calculate_display_histogram_avg(self, data, lookback=3):
+        """Calculate histogram rolling average for display purposes."""
+        return data['Histogram'].rolling(window=lookback, min_periods=1).mean()
+    
+    def _calculate_display_momentum(self, data, slope_threshold=0.001):
+        """Calculate momentum signals for display purposes."""
+        momentum = pd.Series(index=data.index, dtype=str)
+        
+        for i in range(len(data)):
+            row = data.iloc[i]
+            
+            if pd.isna(row.get('MACD_slope')) or pd.isna(row.get('Hist_avg')):
+                momentum.iloc[i] = 'N/A'
+                continue
+                
+            macd_position = row.get('MACD_position', '')
+            slope = row.get('MACD_slope', 0)
+            histogram = row.get('Histogram', 0)
+            hist_avg = row.get('Hist_avg', 0)
+            
+            if macd_position == 'ABOVE':
+                # Long position analysis
+                is_slope_weak = slope < slope_threshold
+                is_histogram_weak = histogram < hist_avg
+                if is_slope_weak and is_histogram_weak:
+                    momentum.iloc[i] = 'WEAK'
+                else:
+                    momentum.iloc[i] = 'STRONG'
+            elif macd_position == 'BELOW':
+                # Short position analysis
+                is_slope_strong = slope > -slope_threshold
+                is_histogram_strong = abs(histogram) < abs(hist_avg)
+                if is_slope_strong and is_histogram_strong:
+                    momentum.iloc[i] = 'STRONG'
+                else:
+                    momentum.iloc[i] = 'WEAK'
+            else:
+                momentum.iloc[i] = 'NEUTRAL'
+        
+        return momentum
 
 # This class is a drop-in replacement for the original QuoteMonitor
 # Just import this and use EnhancedQuoteMonitor instead of QuoteMonitor

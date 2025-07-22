@@ -122,9 +122,114 @@ python MACD_option_trading/continuous_options_trader_service.py
 python MACD_option_trading/web_display.py
 ```
 
+### Enhanced MACD Strategy (Advanced)
+
+**Enhanced MACD Trading with Slope and Histogram Analysis:**
+```bash
+# Standard Enhanced MACD strategy
+python integrated_macd_trader.py --symbol NVDA --strategy enhanced_macd --warmup 30 --interval 60
+
+# Long-only mode (avoids day trading buying power issues)
+python integrated_macd_trader.py --symbol NVDA --strategy enhanced_macd --long-only --warmup 30 --interval 60
+
+# Custom Enhanced MACD parameters
+python integrated_macd_trader.py --symbol NVDA --strategy enhanced_macd \
+   --slope-threshold 0.0015 --slope-lookback 5 --histogram-lookback 5 \
+   --warmup 30 --interval 60 --long-only
+```
+
+### Complete Enhanced MACD Strategy Implementation
+
+The Enhanced MACD Strategy implements sophisticated momentum analysis with precise entry/exit rules:
+
+#### **🅰️ Case A: No Stock Holding (Flat Position)**
+1. **Buy when**: MACD Line crosses above Signal Line (Bullish crossover)
+2. **Short when**: MACD Line crosses below Signal Line (Bearish crossunder) - *Disabled in long-only mode*
+3. **Buy on Momentum Strengthening** *(Long-only mode)*: Advanced entry detection
+   - ✅ MACD Line is below Signal Line (still bearish overall)
+   - ✅ MACD Slope is increasing or near zero (momentum recovering)
+   - ✅ Absolute Histogram is compressing (bearish strength weakening)
+
+#### **🅱️ Case B: Holding Long Position**
+3. **Sell + Short when momentum weakens**:
+   - ✅ MACD Line is above Signal Line
+   - ✅ MACD Slope is decreasing or near zero (< slope_threshold)
+   - ✅ MACD Histogram is smaller than the average of the last 3 values
+4. **Exit Position (Failsafe)**: When MACD Line falls below Signal Line (Bearish crossunder)
+
+#### **🅲️ Case C: Holding Short Position** *(Disabled in long-only mode)*
+5. **Buy to Cover + Buy when momentum strengthens**:
+   - ✅ MACD Line is below Signal Line
+   - ✅ MACD Slope is increasing or near zero (> -slope_threshold)
+   - ✅ Absolute Histogram is smaller than the average of the last 3 absolute values
+6. **Exit Position (Failsafe)**: When MACD Line rises above Signal Line (Bullish crossover)
+
+### Enhanced Strategy Parameters:
+- `--slope-threshold`: MACD slope sensitivity (default: 0.001)
+- `--slope-lookback`: Periods for slope calculation (default: 3)
+- `--histogram-lookback`: Periods for histogram averaging (default: 3)
+- `--long-only`: Enable long-only mode (no short selling) to avoid PDT restrictions
+
+### Day Trading Buying Power Solutions
+
+If you encounter `"insufficient day trading buying power"` errors:
+
+#### **Solution 1: Use Long-Only Mode (Recommended)**
+```bash
+python integrated_macd_trader.py --symbol NVDA --strategy enhanced_macd --long-only --shares 100
+```
+- Disables all short selling that requires day trading buying power
+- Maintains full Enhanced MACD analysis and momentum detection
+- Works with accounts that have regular buying power but no PDT status
+
+#### **Solution 2: Reduce Position Size**
+```bash
+python integrated_macd_trader.py --symbol NVDA --strategy enhanced_macd --shares 10
+```
+- Use smaller quantities to stay within buying power limits
+- Gradually increase as your account grows
+
+#### **Solution 3: Check Account Status**
+The system now provides detailed diagnostics when PDT errors occur:
+- Shows total vs. day trading buying power
+- Identifies Pattern Day Trader status
+- Suggests specific solutions based on your account
+
+### Data Export and Analysis
+
+**CSV Export with Enhanced MACD Analysis:**
+```python
+from enhanced_quote_monitor import EnhancedQuoteMonitor
+from strategies import EnhancedMACDStrategy
+
+# Export real-time quotes with Enhanced MACD data
+monitor = EnhancedQuoteMonitor('NVDA')
+monitor.save_enhanced_macd_csv()  # Exports comprehensive trading data
+
+# Export strategy signals for backtesting  
+strategy = EnhancedMACDStrategy(long_only=True)  # Long-only version
+signals = strategy.generate_signals(historical_data)
+strategy.save_signals_to_csv(signals, symbol='NVDA')
+```
+
+**Exported Data Includes:**
+- Real-time quotes (bid, ask, mid, spread)
+- MACD calculations (EMAfast, EMAslow, MACD, Signal, Histogram)
+- Enhanced analysis (MACD_slope, Histogram_avg, momentum indicators)
+- Trading signals (crossover, crossunder, position changes)
+- Actions and trigger reasons (BUY, SELL, MOMENTUM_WEAKENING, FAILSAFE_EXIT, etc.)
+- Strategy parameters and metadata with case indicators (🅰️🅱️🅲️)
+
 ### Customizing Strategies
 
-Strategies can be customized by editing the `strategies.py` module or creating new strategy classes. The system supports multiple technical analysis approaches beyond MACD.
+Strategies can be customized by editing the `strategies.py` module or creating new strategy classes. The system supports multiple technical analysis approaches:
+
+**Available Strategies:**
+- `macd`: Classic MACD crossover strategy
+- `enhanced_macd`: Advanced MACD with slope and histogram analysis
+- `rsi`: RSI-based mean reversion strategy
+- `bollinger_bands`: Bollinger Bands breakout strategy
+- `moving_average_crossover`: Simple moving average strategy
 
 ## System Architecture
 
@@ -169,14 +274,16 @@ Strategies can be customized by editing the `strategies.py` module or creating n
 
 ## MACD Trading Strategy Details
 
-The MACD (Moving Average Convergence Divergence) strategy implemented in this system works as follows:
+The system implements both Classic and Enhanced MACD strategies with sophisticated momentum analysis:
 
 ### Core MACD Components
 - **MACD Line**: The difference between a fast EMA (default: 13-period) and a slow EMA (default: 21-period)
 - **Signal Line**: An EMA of the MACD line (default: 9-period)
 - **Histogram**: The difference between the MACD line and signal line
 
-### Trading Rules
+### Classic MACD Strategy
+
+**Trading Rules:**
 1. **Initial Position Rules**:
    - When no position exists:
      - If MACD is above the signal line: BUY shares
@@ -194,16 +301,95 @@ The MACD (Moving Average Convergence Divergence) strategy implemented in this sy
    - If long but MACD is below signal line for >15 minutes: Sell and short
    - If short but MACD is above signal line for >15 minutes: Cover and buy
 
-4. **Safeguards**:
-   - Warm-up period collects sufficient data before trading
-   - Time-based throttling prevents excessive trading in choppy markets
-   - Extended hours trading uses limit orders with adjusted prices based on spread
+## Enhanced MACD Strategy Implementation
+
+The Enhanced MACD Strategy provides sophisticated momentum analysis with failsafe exit conditions:
+
+### Strategy Architecture
+
+**Core Philosophy**: Combines traditional MACD crossover signals with advanced momentum detection to reduce whipsaws and improve entry/exit timing.
+
+### Case-Based Trading Logic
+
+#### **🅰️ Case A: No Stock Holding**
+- **A.1 Buy**: MACD crosses above Signal Line → Enter long position
+- **A.2 Short**: MACD crosses below Signal Line → Enter short position *(disabled in long-only mode)*
+
+#### **🅱️ Case B: Holding Long Position** 
+- **B.3 Sell + Short**: Advanced momentum weakening detection
+  - MACD above Signal Line (still bullish overall)
+  - MACD slope decreasing (momentum slowing)
+  - Histogram below recent average (weakening strength)
+- **B.4 Failsafe Exit**: MACD crosses below Signal Line → Guaranteed exit
+
+#### **🅲️ Case C: Holding Short Position** *(Long-only mode: disabled)*
+- **C.5 Cover + Buy**: Advanced momentum strengthening detection
+  - MACD below Signal Line (still bearish overall)
+  - MACD slope increasing (momentum recovering)
+  - Histogram compression (weakening bearish strength)
+- **C.6 Failsafe Exit**: MACD crosses above Signal Line → Guaranteed exit
+
+### Long-Only Mode Features
+
+When `--long-only` is enabled:
+- **No short selling**: Eliminates day trading buying power requirements
+- **Enhanced entry detection**: Three ways to enter long positions
+- **Case A.1**: BUY on bullish crossover (traditional)
+- **Case A.2**: STAY_FLAT instead of SHORT (no bearish entries)
+- **🆕 Case A.3**: BUY on momentum strengthening (advanced entry)
+- **Case B.3**: SELL instead of SELL_AND_SHORT (exit only)
+- **Case B.4**: SELL instead of SELL_AND_SHORT (failsafe exit)
+- **Case C**: Completely disabled (no short positions to manage)
+
+#### **Advanced Long-Only Entry Logic**
+The long-only mode captures **momentum strengthening signals** that would trigger short position exits (Case C.5) and converts them into long entry opportunities:
+
+```
+Market Scenario: Bearish trend with emerging strength
+Time    MACD    Signal   Slope      Histogram    Action
+10:00   -0.08   -0.05    -0.002     -0.03       STAY_FLAT (bearish)
+10:15   -0.06   -0.04    -0.001     -0.025      STAY_FLAT (improving)
+10:30   -0.05   -0.03    +0.0005    -0.02       🅰️ BUY (Case A.3)
+10:45   -0.02   -0.01    +0.001     -0.01       HOLD LONG
+11:00   +0.01   +0.02    +0.002     +0.005      HOLD LONG (now bullish)
+```
+
+**Result**: Enters long position **before** traditional bullish crossover, capturing more upward movement.
+
+### Technical Indicators
+
+**MACD Slope Calculation:**
+```python
+slope = (macd_recent[-1] - macd_recent[0]) / (lookback_period - 1)
+momentum_weakening = slope < threshold and histogram < histogram_average
+```
+
+**Histogram Analysis:**
+- Rolling average over configurable periods
+- Absolute value analysis for short position momentum
+- Compression detection for trend reversal signals
 
 ### Strategy Characteristics
-- Trend-following: Works best in trending markets
-- Full-cycle: Always in the market (either long or short)
-- Momentum-based: Trades on price momentum rather than price levels
-- Adaptive: Uses EMAs which give more weight to recent prices
+
+#### **Standard Enhanced MACD:**
+- **Trend-following**: Works best in trending markets
+- **Full-cycle**: Always in the market (either long or short)
+- **Momentum-based**: Trades on price momentum rather than price levels
+- **Adaptive**: Uses EMAs which give more weight to recent prices
+- **Enhanced precision**: Early momentum detection reduces whipsaws
+
+#### **Long-Only Enhanced MACD:**
+- **Selective entries**: Three sophisticated entry mechanisms
+- **Risk-controlled**: Only long positions, no short squeeze risk
+- **Momentum-optimized**: Captures early momentum shifts in both directions
+- **PDT-compliant**: No day trading buying power requirements
+- **Bull-market focused**: Maximizes upward moves, sits out downtrends
+
+### Safeguards
+- Warm-up period collects sufficient data before trading
+- Time-based throttling prevents excessive trading in choppy markets
+- Extended hours trading uses limit orders with adjusted prices based on spread
+- Comprehensive logging and state persistence for robust operation
 
 ## Configuration
 

@@ -26,6 +26,7 @@ load_dotenv()
 # Determine which data source to use based on environment variables
 DATA_SOURCE = os.getenv("DATA_SOURCE", "ALPACA").upper()
 YAHOO_PRICE_TYPE = os.getenv("YAHOO_PRICE_TYPE", "MID").upper()  # MID or CLOSE
+ALPACA_PRICE_TYPE = os.getenv("ALPACA_PRICE_TYPE", "MID").upper()  # MID or CLOSE
 
 if DATA_SOURCE == "YAHOO":
     if YAHOO_PRICE_TYPE == "CLOSE":
@@ -53,8 +54,18 @@ if DATA_SOURCE == "YAHOO":
             logger.warning("Falling back to Alpaca data source")
             from enhanced_quote_monitor import EnhancedQuoteMonitor as QuoteMonitor
 else:
-    logger.info("Using Alpaca as data source")
-    from enhanced_quote_monitor import EnhancedQuoteMonitor as QuoteMonitor
+    if ALPACA_PRICE_TYPE == "CLOSE":
+        logger.info("Using Alpaca with CLOSE prices as data source")
+        try:
+            from alpaca_close_monitor import AlpacaCloseQuoteMonitor as QuoteMonitor
+            logger.info("Successfully imported Alpaca close price monitor")
+        except ImportError as e:
+            logger.error(f"Failed to import Alpaca close price monitor: {e}")
+            logger.warning("Falling back to Alpaca with mid prices")
+            from enhanced_quote_monitor import EnhancedQuoteMonitor as QuoteMonitor
+    else:  # Default to MID prices
+        logger.info("Using Alpaca with MID prices as data source")
+        from enhanced_quote_monitor import EnhancedQuoteMonitor as QuoteMonitor
 
 # Export the selected QuoteMonitor class
 __all__ = ['QuoteMonitor']

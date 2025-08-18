@@ -475,13 +475,18 @@ class EnhancedQuoteMonitor:
                 if 'Histogram_avg' in self.quotes_df.columns:
                     latest_quotes['HistAvg'] = latest_quotes.get('Histogram_avg', pd.Series()).apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
                 
-                # Add momentum and action based on strategy calculations
-                latest_quotes['Momentum'] = latest_quotes.apply(lambda row:
-                    'WEAK' if row.get('trigger_reason') == 'MOMENTUM_WEAKENING' else
-                    'STRONG' if row.get('trigger_reason') == 'MOMENTUM_STRENGTHENING' else
-                    'BULLISH' if row.get('trigger_reason') == 'MACD_CROSSOVER' else
-                    'BEARISH' if row.get('trigger_reason') == 'MACD_CROSSUNDER' else
-                    'NEUTRAL', axis=1)
+                # Add momentum based on actual strategy trigger reasons
+                if 'trigger_reason' in latest_quotes.columns:
+                    latest_quotes['Momentum'] = latest_quotes['trigger_reason'].apply(lambda x:
+                        'WEAK' if 'MOMENTUM_WEAKENING' in str(x) else
+                        'STRONG' if 'MOMENTUM_STRENGTHENING' in str(x) else
+                        'BULLISH' if 'CROSSOVER' in str(x) else
+                        'BEARISH' if 'CROSSUNDER' in str(x) else
+                        'NEUTRAL')
+                else:
+                    # Fallback: derive momentum from actual strategy values
+                    latest_quotes['Momentum'] = latest_quotes.apply(lambda row:
+                        self._derive_momentum_from_strategy_data(row), axis=1)
                 
                 # Create enhanced signal indicator using actual strategy actions with case indicators
                 latest_quotes['Signal_Indicator'] = latest_quotes.apply(lambda row: 
@@ -767,13 +772,18 @@ class EnhancedQuoteMonitor:
         """Calculate MACD slope for display purposes."""
         slopes = pd.Series(index=data.index, dtype=float)
         
-        for i in range(lookback-1, len(data)):
-            if i >= lookback-1:
-                recent_macd = data['MACD'].iloc[i-lookback+1:i+1].values
-                if len(recent_macd) >= 2 and not pd.isna(recent_macd).any():
-                    # Simple linear slope calculation
-                    slope = (recent_macd[-1] - recent_macd[0]) / (len(recent_macd) - 1)
-                    slopes.iloc[i] = slope
+        for i in range(len(data)):
+            # Use available data points for slope calculation
+            start_idx = max(0, i - lookback + 1)
+            recent_macd = data['MACD'].iloc[start_idx:i+1].values
+            
+            if len(recent_macd) >= 2 and not pd.isna(recent_macd).any():
+                # Simple linear slope calculation
+                slope = (recent_macd[-1] - recent_macd[0]) / (len(recent_macd) - 1)
+                slopes.iloc[i] = slope
+            elif len(recent_macd) == 1 and not pd.isna(recent_macd[0]):
+                # For single data point, slope is 0
+                slopes.iloc[i] = 0.0
         
         return slopes
     
@@ -788,14 +798,17 @@ class EnhancedQuoteMonitor:
         for i in range(len(data)):
             row = data.iloc[i]
             
-            if pd.isna(row.get('MACD_slope')) or pd.isna(row.get('Hist_avg')):
+            # Get values, defaulting to 0 if missing
+            slope = row.get('MACD_slope', 0)
+            hist_avg = row.get('Hist_avg', 0)
+            
+            # Only mark as N/A if we genuinely don't have the required data
+            if pd.isna(slope) or pd.isna(hist_avg):
                 momentum.iloc[i] = 'N/A'
                 continue
                 
             macd_position = row.get('MACD_position', '')
-            slope = row.get('MACD_slope', 0)
             histogram = row.get('Histogram', 0)
-            hist_avg = row.get('Hist_avg', 0)
             
             if macd_position == 'ABOVE':
                 # Long position analysis
@@ -817,6 +830,39 @@ class EnhancedQuoteMonitor:
                 momentum.iloc[i] = 'NEUTRAL'
         
         return momentum
+
+    def _derive_momentum_from_strategy_data(self, row, slope_threshold=0.001):
+        """
+        Derive momentum status from actual strategy data (used when trigger_reason not available).
+        This uses the same logic as the strategy but from pre-calculated values.
+        """
+        slope = row.get('MACD_slope', 0)
+        hist_avg = row.get('Histogram_avg', 0)
+        
+        if pd.isna(slope) or pd.isna(hist_avg):
+            return 'N/A'
+            
+        macd_position = row.get('MACD_position', '')
+        histogram = row.get('Histogram', 0)
+        
+        if macd_position == 'ABOVE':
+            # Long position analysis - same as strategy logic
+            is_slope_weak = slope < slope_threshold
+            is_histogram_weak = histogram < hist_avg
+            if is_slope_weak and is_histogram_weak:
+                return 'WEAK'
+            else:
+                return 'STRONG'
+        elif macd_position == 'BELOW':
+            # Short position analysis - same as strategy logic
+            is_slope_strong = slope > -slope_threshold
+            is_histogram_strong = abs(histogram) < abs(hist_avg)
+            if is_slope_strong and is_histogram_strong:
+                return 'STRONG'
+            else:
+                return 'WEAK'
+        else:
+            return 'NEUTRAL'
 
 # This class is a drop-in replacement for the original QuoteMonitor
 # Just import this and use EnhancedQuoteMonitor instead of QuoteMonitor

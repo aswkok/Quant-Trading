@@ -432,22 +432,53 @@ class YahooCloseQuoteMonitor(YahooQuoteMonitor):
             display_df['Hist'] = recent_quotes['Histogram'].apply(lambda x: f"{x:.4f}")
             display_df['Pos'] = recent_quotes['MACD_position']
             
-            # Add Enhanced MACD columns if we have enough data
-            if len(recent_quotes) >= 3:
-                # Calculate MACD slope for display
+            # Use actual Enhanced MACD strategy data if available (from integrated trader)
+            if 'MACD_slope' in recent_quotes.columns and 'Histogram_avg' in recent_quotes.columns:
+                # Use actual strategy-calculated slope values
+                display_df['Slope'] = recent_quotes['MACD_slope'].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                
+                # Use actual strategy-calculated histogram averages
+                display_df['HistAvg'] = recent_quotes['Histogram_avg'].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
+                
+                # Use actual strategy trigger reasons for momentum display
+                if 'trigger_reason' in recent_quotes.columns:
+                    display_df['Momentum'] = recent_quotes['trigger_reason'].apply(lambda x:
+                        'WEAK' if 'MOMENTUM_WEAKENING' in str(x) else
+                        'STRONG' if 'MOMENTUM_STRENGTHENING' in str(x) else
+                        'BULLISH' if 'CROSSOVER' in str(x) else
+                        'BEARISH' if 'CROSSUNDER' in str(x) else
+                        'NEUTRAL')
+                else:
+                    # Fallback: derive momentum from actual strategy values
+                    display_df['Momentum'] = recent_quotes.apply(lambda row:
+                        self._derive_momentum_from_strategy_data(row), axis=1)
+            elif len(recent_quotes) >= 3:
+                # Fallback: Calculate for display if strategy data not available (standalone mode)
                 recent_quotes['MACD_slope'] = self._calculate_display_macd_slope(recent_quotes)
                 display_df['Slope'] = recent_quotes['MACD_slope'].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
                 
-                # Calculate histogram averages for display
                 recent_quotes['Hist_avg'] = self._calculate_display_histogram_avg(recent_quotes)
                 display_df['HistAvg'] = recent_quotes['Hist_avg'].apply(lambda x: f"{x:.4f}" if not pd.isna(x) else "N/A")
                 
-                # Add momentum analysis signals
                 recent_quotes['Momentum'] = self._calculate_display_momentum(recent_quotes)
                 display_df['Momentum'] = recent_quotes['Momentum']
                 
-                # Add action/signal indicators
-                if 'crossover' in recent_quotes.columns:
+                # Add action/signal indicators using actual strategy data when available
+                if 'action' in recent_quotes.columns and 'trigger_reason' in recent_quotes.columns:
+                    # Use actual strategy actions with enhanced case indicators
+                    display_df['Action'] = recent_quotes.apply(lambda row: 
+                        '🅰️ BUY' if row.get('action') == 'BUY' and 'CROSSOVER' in str(row.get('trigger_reason', '')) else
+                        '🅰️ BUY-MOMENTUM' if row.get('action') == 'BUY' and 'MOMENTUM_STRENGTHENING_LONG_ONLY' in str(row.get('trigger_reason', '')) else
+                        '🅰️ SHORT' if row.get('action') == 'SHORT' and 'CROSSUNDER' in str(row.get('trigger_reason', '')) else
+                        '🅱️ SELL+SHORT' if row.get('action') == 'SELL_AND_SHORT' and 'MOMENTUM_WEAKENING' in str(row.get('trigger_reason', '')) else
+                        '🅱️ FAILSAFE-EXIT' if row.get('action') == 'SELL_AND_SHORT' and 'FAILSAFE_CROSSUNDER' in str(row.get('trigger_reason', '')) else
+                        '🅲️ COVER+BUY' if row.get('action') == 'COVER_AND_BUY' and 'MOMENTUM_STRENGTHENING' in str(row.get('trigger_reason', '')) else
+                        '🅲️ FAILSAFE-EXIT' if row.get('action') == 'COVER_AND_BUY' and 'FAILSAFE_CROSSOVER' in str(row.get('trigger_reason', '')) else
+                        '⚡ WEAK' if row['Momentum'] == 'WEAK' else
+                        '⚡ STRONG' if row['Momentum'] == 'STRONG' else
+                        '➖ HOLD', axis=1)
+                elif 'crossover' in recent_quotes.columns:
+                    # Fallback: use basic crossover signals
                     display_df['Action'] = recent_quotes.apply(lambda row: 
                         '🚀 BUY' if row.get('crossover', False) else 
                         '📉 SELL' if row.get('crossunder', False) else 
@@ -455,7 +486,7 @@ class YahooCloseQuoteMonitor(YahooQuoteMonitor):
                         '⚡ STRONG' if row['Momentum'] == 'STRONG' else
                         '➖ HOLD', axis=1)
                 else:
-                    # If no crossover data, just use momentum
+                    # Final fallback: just use momentum
                     display_df['Action'] = recent_quotes['Momentum'].apply(lambda x: 
                         '⚡ WEAK' if x == 'WEAK' else
                         '⚡ STRONG' if x == 'STRONG' else
@@ -468,13 +499,18 @@ class YahooCloseQuoteMonitor(YahooQuoteMonitor):
         """Calculate MACD slope for display purposes."""
         slopes = pd.Series(index=data.index, dtype=float)
         
-        for i in range(lookback-1, len(data)):
-            if i >= lookback-1:
-                recent_macd = data['MACD'].iloc[i-lookback+1:i+1].values
-                if len(recent_macd) >= 2 and not pd.isna(recent_macd).any():
-                    # Simple linear slope calculation
-                    slope = (recent_macd[-1] - recent_macd[0]) / (len(recent_macd) - 1)
-                    slopes.iloc[i] = slope
+        for i in range(len(data)):
+            # Use available data points for slope calculation
+            start_idx = max(0, i - lookback + 1)
+            recent_macd = data['MACD'].iloc[start_idx:i+1].values
+            
+            if len(recent_macd) >= 2 and not pd.isna(recent_macd).any():
+                # Simple linear slope calculation
+                slope = (recent_macd[-1] - recent_macd[0]) / (len(recent_macd) - 1)
+                slopes.iloc[i] = slope
+            elif len(recent_macd) == 1 and not pd.isna(recent_macd[0]):
+                # For single data point, slope is 0
+                slopes.iloc[i] = 0.0
         
         return slopes
     
@@ -489,14 +525,17 @@ class YahooCloseQuoteMonitor(YahooQuoteMonitor):
         for i in range(len(data)):
             row = data.iloc[i]
             
-            if pd.isna(row.get('MACD_slope')) or pd.isna(row.get('Hist_avg')):
+            # Get values, defaulting to 0 if missing
+            slope = row.get('MACD_slope', 0)
+            hist_avg = row.get('Hist_avg', 0)
+            
+            # Only mark as N/A if we genuinely don't have the required data
+            if pd.isna(slope) or pd.isna(hist_avg):
                 momentum.iloc[i] = 'N/A'
                 continue
                 
             macd_position = row.get('MACD_position', '')
-            slope = row.get('MACD_slope', 0)
             histogram = row.get('Histogram', 0)
-            hist_avg = row.get('Hist_avg', 0)
             
             if macd_position == 'ABOVE':
                 # Long position analysis
@@ -518,6 +557,39 @@ class YahooCloseQuoteMonitor(YahooQuoteMonitor):
                 momentum.iloc[i] = 'NEUTRAL'
         
         return momentum
+
+    def _derive_momentum_from_strategy_data(self, row, slope_threshold=0.001):
+        """
+        Derive momentum status from actual strategy data (used when trigger_reason not available).
+        This uses the same logic as the strategy but from pre-calculated values.
+        """
+        slope = row.get('MACD_slope', 0)
+        hist_avg = row.get('Histogram_avg', 0)
+        
+        if pd.isna(slope) or pd.isna(hist_avg):
+            return 'N/A'
+            
+        macd_position = row.get('MACD_position', '')
+        histogram = row.get('Histogram', 0)
+        
+        if macd_position == 'ABOVE':
+            # Long position analysis - same as strategy logic
+            is_slope_weak = slope < slope_threshold
+            is_histogram_weak = histogram < hist_avg
+            if is_slope_weak and is_histogram_weak:
+                return 'WEAK'
+            else:
+                return 'STRONG'
+        elif macd_position == 'BELOW':
+            # Short position analysis - same as strategy logic
+            is_slope_strong = slope > -slope_threshold
+            is_histogram_strong = abs(histogram) < abs(hist_avg)
+            if is_slope_strong and is_histogram_strong:
+                return 'STRONG'
+            else:
+                return 'WEAK'
+        else:
+            return 'NEUTRAL'
 
 # Create an alias for compatibility with the existing system
 CloseQuoteMonitor = YahooCloseQuoteMonitor
